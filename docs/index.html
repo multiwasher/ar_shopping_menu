@@ -1,11 +1,12 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <base href="/ar_shopping_menu/">
+  <base href="$FLUTTER_BASE_HREF">
   <meta charset="UTF-8">
   <title>AR Gesture Menu Shopping</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/face_detection.js" crossorigin="anonymous"></script>
   <style>
     #webcam {
       position: absolute;
@@ -23,10 +24,14 @@
   <script>
     const videoElement = document.getElementById('webcam');
     
+    // Estados do Sistema: "SCANNING" ou "AUTORIZADO"
+    let estadoSeguranca = "SCANNING";
+    let tempoRostoDetetado = 0;
+
+    // 1. Configurar Detetor de Mãos
     const hands = new Hands({
       locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
     });
-
     hands.setOptions({
       maxNumHands: 1,
       modelComplexity: 1,
@@ -35,16 +40,17 @@
     });
 
     hands.onResults((results) => {
+      // SÓ PROCESSA AS MÃOS SE JÁ ESTIVER AUTORIZADO PELO ROSTO
+      if (estadoSeguranca !== "AUTORIZADO") return;
+
       if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0 && results.multiHandedness) {
         const landmarks = results.multiHandLandmarks[0];
-        const labelMao = results.multiHandedness[0].label; // "Left" ou "Right"
+        const labelMao = results.multiHandedness[0].label;
         
         const thumb = landmarks[4];
         const index = landmarks[8];
         const pinky = landmarks[17];
 
-        // 1. MATEMÁTICA PALMA VS DORSO
-        // Com o espelho da câmara, analisamos a posição relativa do Polegar e do Mindinho
         let visaoMao = "PALMA"; 
         if (labelMao === "Left") {
           visaoMao = (thumb.x > pinky.x) ? "PALMA" : "DORSO";
@@ -52,23 +58,61 @@
           visaoMao = (thumb.x < pinky.x) ? "PALMA" : "DORSO";
         }
 
-        // 2. CÁLCULO DA PINÇA (Polegar + Indicador juntos)
-        const distancia = Math.sqrt(
-          Math.pow(thumb.x - index.x, 2) + Math.pow(thumb.y - index.y, 2)
-        );
-        const fezPinca = distancia < 0.045; // Limiar de clique sensível
+        const distancia = Math.sqrt(Math.pow(thumb.x - index.x, 2) + Math.pow(thumb.y - index.y, 2));
+        const fezPinca = distancia < 0.045;
 
         if (typeof window.onHandTracked === 'function') {
-          window.onHandTracked(index.x, index.y, visaoMao, fezPinca);
+          window.onHandTracked(index.x, index.y, visaoMao, fezPinca, "AUTORIZADO");
         }
       }
     });
 
+    // 2. Configurar Detetor Facial
+    const faceDetection = new FaceDetection({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/${file}`
+    });
+    faceDetection.setOptions({
+      modelSelection: 0,
+      minDetectionConfidence: 0.6
+    });
+
+    faceDetection.onResults((results) => {
+      if (estadoSeguranca === "AUTORIZADO") return;
+
+      if (results.detections && results.detections.length > 0) {
+        tempoRostoDetetado += 1;
+        
+        // Envia feedback ao Flutter que está a escanear o rosto
+        if (typeof window.onHandTracked === 'function') {
+          window.onHandTracked(0.5, 0.5, "NENHUMA", false, "ESCANEANDO");
+        }
+
+        // Se detetar o rosto continuamente por ~25 frames (~1 segundo estável)
+        if (tempoRostoDetetado > 25) {
+          estadoSeguranca = "AUTORIZADO";
+          if (typeof window.onHandTracked === 'function') {
+            window.onHandTracked(0.5, 0.5, "NENHUMA", false, "APROVADO");
+          }
+          // Fecha o pipeline do rosto para poupar processador
+          faceDetection.close(); 
+        }
+      } else {
+        tempoRostoDetetado = 0; // Reset se perder o rosto
+      }
+    });
+
+    // 3. Inicializar a Câmara Unificada
     navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 } })
       .then((stream) => {
         videoElement.srcObject = stream;
         const camera = new Camera(videoElement, {
-          onFrame: async () => { await hands.send({ image: videoElement }); },
+          onFrame: async () => {
+            if (estadoSeguranca === "SCANNING") {
+              await faceDetection.send({ image: videoElement });
+            } else {
+              await hands.send({ image: videoElement });
+            }
+          },
           width: 1280, height: 720
         });
         camera.start();
