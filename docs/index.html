@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <base href="$FLUTTER_BASE_HREF">
+  <base href="/ar_shopping_menu/">
   <meta charset="UTF-8">
   <title>AR Gesture Menu Shopping</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
@@ -16,19 +16,46 @@
       transform: scaleX(-1);
       z-index: -1;
     }
+    /* Camada visual de "A ESCANEAR" criada diretamente no HTML */
+    #scanner-overlay {
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      width: 240px; height: 240px;
+      border: 4px dashed #00e5ff;
+      border-radius: 50%;
+      box-shadow: 0 0 20px #00e5ff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #00e5ff;
+      font-family: sans-serif;
+      font-weight: bold;
+      font-size: 14px;
+      letter-spacing: 1px;
+      pointer-events: none;
+      z-index: 10;
+      box-sizing: border-box;
+      animation: rodar 4s linear infinite;
+    }
+    @keyframes rodar {
+      100% { transform: translate(-50%, -50%) rotate(360deg); }
+    }
   </style>
 </head>
 <body>
   <video id="webcam" autoplay playsinline></video>
+  <div id="scanner-overlay">SCAN FACIAL</div>
 
   <script>
+    window.onHandTracked = null;
     const videoElement = document.getElementById('webcam');
+    const overlay = document.getElementById('scanner-overlay');
     
-    // Estados do Sistema: "SCANNING" ou "AUTORIZADO"
     let estadoSeguranca = "SCANNING";
     let tempoRostoDetetado = 0;
 
-    // 1. Configurar Detetor de Mãos
+    // 1. Configurar as Mãos
     const hands = new Hands({
       locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
     });
@@ -40,7 +67,7 @@
     });
 
     hands.onResults((results) => {
-      // SÓ PROCESSA AS MÃOS SE JÁ ESTIVER AUTORIZADO PELO ROSTO
+      // SE NÃO PASSOU NO SCAN FACIAL, BLOQUEIA TOTALMENTE O FLUTTER
       if (estadoSeguranca !== "AUTORIZADO") return;
 
       if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0 && results.multiHandedness) {
@@ -61,13 +88,14 @@
         const distancia = Math.sqrt(Math.pow(thumb.x - index.x, 2) + Math.pow(thumb.y - index.y, 2));
         const fezPinca = distancia < 0.045;
 
+        // Só envia os dados quando a segurança der o OK
         if (typeof window.onHandTracked === 'function') {
-          window.onHandTracked(index.x, index.y, visaoMao, fezPinca, "AUTORIZADO");
+          window.onHandTracked(index.x, index.y, visaoMao, fezPinca);
         }
       }
     });
 
-    // 2. Configurar Detetor Facial
+    // 2. Configurar o Reconhecimento Facial
     const faceDetection = new FaceDetection({
       locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/${file}`
     });
@@ -81,27 +109,25 @@
 
       if (results.detections && results.detections.length > 0) {
         tempoRostoDetetado += 1;
-        
-        // Envia feedback ao Flutter que está a escanear o rosto
-        if (typeof window.onHandTracked === 'function') {
-          window.onHandTracked(0.5, 0.5, "NENHUMA", false, "ESCANEANDO");
-        }
+        overlay.style.borderColor = "#9c27b0";
+        overlay.style.color = "#9c27b0";
+        overlay.innerText = "A VALIDAR...";
 
-        // Se detetar o rosto continuamente por ~25 frames (~1 segundo estável)
+        // Rosto detetado por ~1 segundo seguido (aprox. 25 frames)
         if (tempoRostoDetetado > 25) {
           estadoSeguranca = "AUTORIZADO";
-          if (typeof window.onHandTracked === 'function') {
-            window.onHandTracked(0.5, 0.5, "NENHUMA", false, "APROVADO");
-          }
-          // Fecha o pipeline do rosto para poupar processador
-          faceDetection.close(); 
+          overlay.style.display = "none"; // Esconde o círculo de scan
+          faceDetection.close(); // Desliga a IA do rosto para poupar o PC
         }
       } else {
-        tempoRostoDetetado = 0; // Reset se perder o rosto
+        tempoRostoDetetado = 0;
+        overlay.style.borderColor = "#00e5ff";
+        overlay.style.color = "#00e5ff";
+        overlay.innerText = "SCAN FACIAL";
       }
     });
 
-    // 3. Inicializar a Câmara Unificada
+    // 3. Câmara Inteligente (Gere qual a IA que corre em tempo real)
     navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 } })
       .then((stream) => {
         videoElement.srcObject = stream;
