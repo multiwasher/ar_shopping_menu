@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base href="/ar_shopping_menu/">
+  <meta charset="UTF-8">
+  <title>AR Gesture Menu Shopping</title>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+  <style>
+    #webcam {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100vw; height: 100vh;
+      object-fit: cover;
+      transform: scaleX(-1);
+      z-index: -1;
+    }
+  </style>
+</head>
+<body>
+  <video id="webcam" autoplay playsinline></video>
+
+  <script>
+    const videoElement = document.getElementById('webcam');
+    
+    const hands = new Hands({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+    });
+
+    hands.setOptions({
+      maxNumHands: 1,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.7,
+      minTrackingConfidence: 0.7
+    });
+
+    hands.onResults((results) => {
+      if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0 && results.multiHandedness) {
+        const landmarks = results.multiHandLandmarks[0];
+        const labelMao = results.multiHandedness[0].label; // "Left" ou "Right"
+        
+        const thumb = landmarks[4];
+        const index = landmarks[8];
+        const pinky = landmarks[17];
+
+        // 1. MATEMÁTICA PALMA VS DORSO
+        // Com o espelho da câmara, analisamos a posição relativa do Polegar e do Mindinho
+        let visaoMao = "PALMA"; 
+        if (labelMao === "Left") {
+          visaoMao = (thumb.x > pinky.x) ? "PALMA" : "DORSO";
+        } else {
+          visaoMao = (thumb.x < pinky.x) ? "PALMA" : "DORSO";
+        }
+
+        // 2. CÁLCULO DA PINÇA (Polegar + Indicador juntos)
+        const distancia = Math.sqrt(
+          Math.pow(thumb.x - index.x, 2) + Math.pow(thumb.y - index.y, 2)
+        );
+        const fezPinca = distancia < 0.045; // Limiar de clique sensível
+
+        if (typeof window.onHandTracked === 'function') {
+          window.onHandTracked(index.x, index.y, visaoMao, fezPinca);
+        }
+      }
+    });
+
+    navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 } })
+      .then((stream) => {
+        videoElement.srcObject = stream;
+        const camera = new Camera(videoElement, {
+          onFrame: async () => { await hands.send({ image: videoElement }); },
+          width: 1280, height: 720
+        });
+        camera.start();
+      });
+  </script>
+  <script src="flutter_bootstrap.js" async></script>
+</body>
+</html>
